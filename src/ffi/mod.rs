@@ -39,6 +39,8 @@
 
 /// Errors thrown by the FFI operations
 pub mod errors;
+/// dv ffi extensions
+pub mod ext;
 
 mod config;
 mod dns;

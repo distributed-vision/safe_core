@@ -18,6 +18,9 @@
 /// Lazy evaluated response getter.
 pub mod response_getter;
 
+/// dv client extensions
+pub mod ext;
+
 mod user_account;
 mod message_queue;
 
