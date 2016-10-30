@@ -15,15 +15,15 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use std::sync::{Arc, Mutex};
+use core::{SelfEncryptionStorage, utility};
 
 use core::client::Client;
 use core::errors::CoreError;
-use core::{SelfEncryptionStorage, utility};
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use routing::{Data, DataIdentifier, ImmutableData, XorName};
+use rust_sodium::crypto::box_::{Nonce, PublicKey, SecretKey};
 use self_encryption::{DataMap, SelfEncryptor};
-use sodiumoxide::crypto::box_::{Nonce, PublicKey, SecretKey};
+use std::sync::{Arc, Mutex};
 
 // TODO(Spandan) Ask Routing to define this constant and use it from there
 const MAX_IMMUT_DATA_SIZE_IN_BYTES: usize = 1024 * 1024;
@@ -41,6 +41,8 @@ pub fn create(client: Arc<Mutex<Client>>,
               data: Vec<u8>,
               encryption_keys: Option<(&PublicKey, &SecretKey, &Nonce)>)
               -> Result<ImmutableData, CoreError> {
+    trace!("Creating conformant ImmutableData.");
+
     let mut storage = SelfEncryptionStorage::new(client.clone());
     let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, DataMap::None));
     try!(self_encryptor.write(&data, 0));
@@ -77,36 +79,47 @@ pub fn get_data(client: Arc<Mutex<Client>>,
                 immut_data_name: XorName,
                 decryption_keys: Option<(&PublicKey, &SecretKey, &Nonce)>)
                 -> Result<Vec<u8>, CoreError> {
+    trace!("Getting data after fetching a conformant ImmutableData.");
+
     let data_identifier = DataIdentifier::Immutable(immut_data_name);
     let response_getter = try!(unwrap!(client.lock(), "Couldn't lock").get(data_identifier, None));
 
     match try!(response_getter.get()) {
-        Data::Immutable(mut immut_data) => {
-            let mut storage = SelfEncryptionStorage::new(client.clone());
-            while let Ok(DataTypeEncoding::DataMap(data_map)) = deserialise(immut_data.value()) {
-                let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, data_map));
-                let length = self_encryptor.len();
-                immut_data = try!(deserialise(&try!(self_encryptor.read(0, length))));
-            }
+        Data::Immutable(immut_data) => {
+            get_data_from_immut_data(client, immut_data, decryption_keys)
+        }
+        _ => Err(CoreError::ReceivedUnexpectedData),
+    }
+}
 
-            match try!(deserialise(&immut_data.value())) {
-                DataTypeEncoding::Serialised(serialised_data_map) => {
-                    let data_map = if let Some((public_key, secret_key, nonce)) = decryption_keys {
-                        let plain_text = try!(utility::hybrid_decrypt(&serialised_data_map,
-                                                                      nonce,
-                                                                      public_key,
-                                                                      secret_key));
-                        try!(deserialise(&plain_text))
-                    } else {
-                        try!(deserialise(&serialised_data_map))
-                    };
+/// Get actual data from ImmutableData created via create() function in this module.
+/// Call this if you already have the ImmutableData with you.
+pub fn get_data_from_immut_data(client: Arc<Mutex<Client>>,
+                                mut immut_data: ImmutableData,
+                                decryption_keys: Option<(&PublicKey, &SecretKey, &Nonce)>)
+                                -> Result<Vec<u8>, CoreError> {
+    let mut storage = SelfEncryptionStorage::new(client.clone());
+    while let Ok(DataTypeEncoding::DataMap(data_map)) = deserialise(immut_data.value()) {
+        let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, data_map));
+        let length = self_encryptor.len();
+        immut_data = try!(deserialise(&try!(self_encryptor.read(0, length))));
+    }
 
-                    let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, data_map));
-                    let length = self_encryptor.len();
-                    Ok(try!(self_encryptor.read(0, length)))
-                }
-                _ => Err(CoreError::ReceivedUnexpectedData),
-            }
+    match try!(deserialise(&immut_data.value())) {
+        DataTypeEncoding::Serialised(serialised_data_map) => {
+            let data_map = if let Some((public_key, secret_key, nonce)) = decryption_keys {
+                let plain_text = try!(utility::hybrid_decrypt(&serialised_data_map,
+                                                              nonce,
+                                                              public_key,
+                                                              secret_key));
+                try!(deserialise(&plain_text))
+            } else {
+                try!(deserialise(&serialised_data_map))
+            };
+
+            let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, data_map));
+            let length = self_encryptor.len();
+            Ok(try!(self_encryptor.read(0, length)))
         }
         _ => Err(CoreError::ReceivedUnexpectedData),
     }
@@ -114,14 +127,14 @@ pub fn get_data(client: Arc<Mutex<Client>>,
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    use std::sync::{Arc, Mutex};
-
-    use routing::Data;
     use core::utility;
     use core::utility::test_utils;
-    use sodiumoxide::crypto::box_;
+
+    use routing::Data;
+    use rust_sodium::crypto::box_;
+
+    use std::sync::{Arc, Mutex};
+    use super::*;
 
     // TODO It takes a very long time in debug mode - it is due to S.E crate.
     #[test]

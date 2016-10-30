@@ -15,25 +15,33 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use std::sync::{Arc, Mutex};
 
 use core::client::Client;
 use ffi::config::{LAUNCHER_GLOBAL_CONFIG_FILE_NAME, LAUNCHER_GLOBAL_DIRECTORY_NAME};
 use ffi::errors::FfiError;
 use maidsafe_utilities::serialisation::{deserialise, serialise};
-use nfs::directory_listing::DirectoryListing;
 use nfs::{AccessLevel, UNVERSIONED_DIRECTORY_LISTING_TAG};
+use nfs::directory_listing::DirectoryListing;
 use nfs::helper::directory_helper::DirectoryHelper;
 use nfs::helper::file_helper::FileHelper;
 use nfs::helper::writer::Mode::Overwrite;
 use nfs::metadata::directory_key::DirectoryKey;
 use routing::XorName;
-use sodiumoxide::crypto::hash::sha256;
+use rust_sodium::crypto::{box_, secretbox};
+use rust_sodium::crypto::hash::sha256;
+use std::sync::{Arc, Mutex};
 
 #[derive(RustcEncodable, RustcDecodable, Debug)]
 pub struct LauncherConfiguration {
     pub app_id: XorName,
+    pub app_info: AppInfo,
+}
+
+#[derive(RustcEncodable, RustcDecodable, Debug, Clone)]
+pub struct AppInfo {
     pub app_root_dir_key: DirectoryKey,
+    pub asym_keys: (box_::PublicKey, box_::SecretKey),
+    pub sym_key: secretbox::Key,
 }
 
 pub struct ConfigHandler {
@@ -45,56 +53,80 @@ impl ConfigHandler {
         ConfigHandler { client: client }
     }
 
-    pub fn get_app_dir_key(&self,
-                           app_name: String,
-                           app_key: String,
-                           vendor: String)
-                           -> Result<DirectoryKey, FfiError> {
+    pub fn get_app_info(&self,
+                        app_name: String,
+                        app_key: String,
+                        vendor: String)
+                        -> Result<AppInfo, FfiError> {
         let app_id = self.get_app_id(&app_key, &vendor);
 
         let (configs, _) = try!(self.get_launcher_global_config_and_dir());
-        let app_dir_key = match configs.into_iter()
+        let app_info = match configs.into_iter()
             .find(|config| config.app_id == app_id)
             .map(|config| config) {
-            Some(config) => config.app_root_dir_key.clone(),
+            Some(config) => config.app_info,
             None => {
+                trace!("App's exclusive directory is not mapped inside Launcher's config. This \
+                        must imply it's not present inside user-root-dir also - creating one.");
+
                 let dir_helper = DirectoryHelper::new(self.client.clone());
                 let mut root_dir_listing = try!(dir_helper.get_user_root_directory_listing());
                 let app_dir_name = self.get_app_dir_name(&app_name, &root_dir_listing);
-                let dir_key = try!(dir_helper.create(app_dir_name,
-                                                     UNVERSIONED_DIRECTORY_LISTING_TAG,
-                                                     Vec::new(),
-                                                     false,
-                                                     AccessLevel::Private,
-                                                     Some(&mut root_dir_listing)))
+                let dir_key = *try!(dir_helper.create(app_dir_name,
+                                                      UNVERSIONED_DIRECTORY_LISTING_TAG,
+                                                      Vec::new(),
+                                                      false,
+                                                      AccessLevel::Private,
+                                                      Some(&mut root_dir_listing)))
                     .0
-                    .get_key()
-                    .clone();
+                    .get_key();
+
+                let app_info = AppInfo {
+                    app_root_dir_key: dir_key,
+                    asym_keys: box_::gen_keypair(),
+                    sym_key: secretbox::gen_key(),
+                };
                 let app_config = LauncherConfiguration {
                     app_id: app_id,
-                    app_root_dir_key: dir_key.clone(),
+                    app_info: app_info.clone(),
                 };
                 try!(self.upsert_to_launcher_global_config(app_config));
-                dir_key
+
+                app_info
             }
         };
 
-        Ok(app_dir_key)
+        Ok(app_info)
     }
 
-    fn get_app_id(&self, app_key: &str, vendor: &str) -> XorName {
+    /// Return the application config identity
+    pub fn get_app_id(&self, app_key: &str, vendor: &str) -> XorName {
         let mut id_str = String::new();
         id_str.push_str(app_key);
         id_str.push_str(vendor);
         XorName(sha256::hash(id_str.as_bytes()).0)
     }
 
+    /// Returns the app id associated with the given app_dir_key (Note this is a
+    /// work around for the fact that app_id is bot included in app info)
+    pub fn get_app_id_for_key(&self, app_dir_key: &DirectoryKey) -> Result<XorName, FfiError> {
+        let (configs, _) = try!(self.get_launcher_global_config_and_dir());
+
+        let app_id = match configs.into_iter()
+            .find(|config| config.app_info.app_root_dir_key == *app_dir_key)
+            .map(|config| config) {
+            Some(config) => config.app_id,
+            None => return Err(FfiError::InvalidPath)
+        };
+        Ok(app_id)
+    }
+
     fn get_app_dir_name(&self, app_name: &str, directory_listing: &DirectoryListing) -> String {
-        let mut dir_name = format!("{}-Root-Dir", &app_name);
+        let mut dir_name = format!("{}-Root-Dir", app_name);
         if directory_listing.find_sub_directory(&dir_name).is_some() {
             let mut index = 1u8;
             loop {
-                dir_name = format!("{}-{}-Root-Dir", &app_name, index);
+                dir_name = format!("{}-{}-Root-Dir", app_name, index);
                 if directory_listing.find_sub_directory(&dir_name).is_some() {
                     index += 1;
                 } else {
@@ -109,6 +141,8 @@ impl ConfigHandler {
     fn upsert_to_launcher_global_config(&self,
                                         config: LauncherConfiguration)
                                         -> Result<(), FfiError> {
+        trace!("Update (by overwriting) Launcher's config file by appending a new config.");
+
         let (mut global_configs, dir_listing) = try!(self.get_launcher_global_config_and_dir());
 
         // (Spandan)
@@ -133,7 +167,7 @@ impl ConfigHandler {
 
         let mut file_helper = FileHelper::new(self.client.clone());
         let mut writer = try!(file_helper.update_content(file, Overwrite, dir_listing));
-        try!(writer.write(&try!(serialise(&global_configs)), 0));
+        try!(writer.write(&try!(serialise(&global_configs))));
         let _ = try!(writer.close());
 
         Ok(())
@@ -142,6 +176,8 @@ impl ConfigHandler {
     fn get_launcher_global_config_and_dir
         (&self)
          -> Result<(Vec<LauncherConfiguration>, DirectoryListing), FfiError> {
+        trace!("Get Launcher's config directory.");
+
         let dir_helper = DirectoryHelper::new(self.client.clone());
         let mut dir_listing = try!(dir_helper.get_configuration_directory_listing(
             LAUNCHER_GLOBAL_DIRECTORY_NAME.to_string()));
@@ -154,6 +190,9 @@ impl ConfigHandler {
                 .cloned() {
                 Some(file) => file,
                 None => {
+                    trace!("Launcher's config file does not exist inside it's config dir - \
+                            creating one.");
+
                     dir_listing =
                         try!(try!(file_helper.create(LAUNCHER_GLOBAL_CONFIG_FILE_NAME.to_string(),
                                             Vec::new(),

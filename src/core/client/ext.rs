@@ -1,21 +1,23 @@
 
-use std::sync::mpsc;
-
-use core::client::message_queue::MessageQueue;
-use core::client::Client;
-use core::client::SessionPacketEncryptionKeys;
-use core::client::user_account::Account;
 use core::errors::CoreError;
 use core::translated_events::NetworkEvent;
-use safe_network_common::TYPE_TAG_SESSION_PACKET;
-use routing::{Data, DataIdentifier, FullId, StructuredData,XorName};
+
+use routing::{Data, DataIdentifier, FullId, StructuredData, XorName};
+#[cfg(not(feature = "use-mock-routing"))]
+use routing::Client as Routing;
+use routing::TYPE_TAG_SESSION_PACKET;
+use rust_sodium::crypto::hash::sha256;
+
+use core::client::message_queue::MessageQueue;
 
 #[cfg(feature = "use-mock-routing")]
 use core::client::non_networking_test_framework::RoutingMock as Routing;
-#[cfg(not(feature = "use-mock-routing"))]
-use routing::Client as Routing;
 
-use sodiumoxide::crypto::hash::sha256;
+use core::client::user_account::Account;
+use std::sync::mpsc;
+
+use core::client::Client;
+use core::client::SessionPacketEncryptionKeys;
 
 
 /// dv client extenstion methods
@@ -23,8 +25,10 @@ pub struct ClientExt {
 }
 
 impl ClientExt {
+
     /// create account using raw network credentials
-    pub fn create_account(keyword: Vec<u8>, pin: Vec<u8>, password: Vec<u8>) -> Result<Client, CoreError> {
+    pub fn create_account(keyword: &Vec<u8>, pin: &Vec<u8>, password: &Vec<u8>) -> Result<Client, CoreError> {
+        trace!("Creating an account.");
 
         let account_packet = Account::new(None, None);
         let id_packet = FullId::with_keys((account_packet.get_maid().public_keys().1,
@@ -39,11 +43,16 @@ impl ClientExt {
                                                              vec![network_event_sender]);
         let routing = try!(Routing::new(routing_sender, Some(id_packet)));
 
+        trace!("Waiting to get connected to the Network...");
         match try!(network_event_receiver.recv()) {
             NetworkEvent::Connected => (),
-            _ => return Err(CoreError::OperationAborted),
+            x => {
+                warn!("Could not connect to the Network. Unexpected: {:?}", x);
+                return Err(CoreError::OperationAborted);
+            }
         }
-        
+        trace!("Connected to the Network.");
+
         let hash_sign_key = sha256::hash(&(account_packet.get_maid().public_keys().0).0);
         let client_manager_addr = XorName(hash_sign_key.0);
 
@@ -52,13 +61,14 @@ impl ClientExt {
             routing: routing,
             _raii_joiner: raii_joiner,
             message_queue: message_queue,
-            session_packet_id: Some(try!(Account::generate_network_id(&keyword, &pin))),
-            session_packet_keys: Some(SessionPacketEncryptionKeys::new(password, pin)),
+            session_packet_id: Some(try!(Account::generate_network_id(keyword, pin))),
+            session_packet_keys: Some(SessionPacketEncryptionKeys::new(password.clone(), pin.clone())),
             client_manager_addr: Some(client_manager_addr),
             issued_gets: 0,
             issued_puts: 0,
             issued_posts: 0,
             issued_deletes: 0,
+            issued_appends: 0,
         };
 
         {
@@ -77,17 +87,17 @@ impl ClientExt {
                                          Some(&account.get_maid().secret_keys().0)))
             };
 
-            try!(client.put_recover(Data::Structured(account_version), None));
+            try!(try!(client.put(Data::Structured(account_version), None)).get());
         }
 
         Ok(client)
     }
 
     /// login using raw network credentials
-    pub fn log_in(keyword: Vec<u8>, pin: Vec<u8>, password: Vec<u8>) -> Result<Client, CoreError> {
+    pub fn log_in(keyword: &Vec<u8>, pin: &Vec<u8>, password: &Vec<u8>) -> Result<Client, CoreError> {
 
         let mut unregistered_client = try!(Client::create_unregistered_client());
-        let user_id = try!(Account::generate_network_id(&keyword, &pin));
+        let user_id = try!(Account::generate_network_id(keyword, pin));
 
         let session_packet_request = DataIdentifier::Structured(user_id, TYPE_TAG_SESSION_PACKET);
 
@@ -118,15 +128,18 @@ impl ClientExt {
                                                                  vec![network_event_sender]);
             let routing = try!(Routing::new(routing_sender, Some(id_packet)));
 
+            trace!("Waiting to get connected to the Network...");
             match try!(network_event_receiver.recv()) {
                 NetworkEvent::Connected => (),
-                _ => return Err(CoreError::OperationAborted),
+                x => {
+                    warn!("Could not connect to the Network. Unexpected: {:?}", x);
+                    return Err(CoreError::OperationAborted);
+                }
             }
+            trace!("Connected to the Network.");
 
-            let hash_sign_key = sha256::hash(&(decrypted_session_packet.get_maid()
-                    .public_keys()
-                    .0)
-                .0);
+            let hash_sign_key =
+                sha256::hash(&(decrypted_session_packet.get_maid().public_keys().0).0);
             let client_manager_addr = XorName(hash_sign_key.0);
 
             let client = Client {
@@ -134,18 +147,40 @@ impl ClientExt {
                 routing: routing,
                 _raii_joiner: raii_joiner,
                 message_queue: message_queue,
-                session_packet_id: Some(try!(Account::generate_network_id(&keyword, &pin))),
-                session_packet_keys: Some(SessionPacketEncryptionKeys::new(password, pin)),
+                session_packet_id: Some(user_id),
+                session_packet_keys: Some(SessionPacketEncryptionKeys::new(password.clone(), pin.clone())),
                 client_manager_addr: Some(client_manager_addr),
                 issued_gets: 0,
                 issued_puts: 0,
                 issued_posts: 0,
                 issued_deletes: 0,
+                issued_appends: 0,
             };
 
             Ok(client)
         } else {
             Err(CoreError::ReceivedUnexpectedData)
         }
+    }
+
+    /// Generate User's Identity for the network using supplied credentials in a
+    /// deterministic way, or an empty vector in case of error
+    pub fn generate_network_id(keyword: &Vec<u8>, pin: &Vec<u8>) -> Vec<u8> {
+        let network_id=match Account::generate_network_id(
+            keyword, pin) {
+                Err(_) => return Vec::new(),
+                Ok(f) => f
+            };
+        network_id[..].to_vec()
+    }
+
+    /// Return the user network identity
+    pub fn get_network_id( client: &Client ) -> Vec<u8> {
+            let network_id = match client.session_packet_id {
+                Some(i) => i,
+                None => return Vec::new()
+            };
+
+            network_id[..].to_vec()
     }
 }

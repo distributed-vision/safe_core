@@ -41,7 +41,7 @@ extern crate maidsafe_utilities;
 extern crate regex;
 extern crate routing;
 extern crate safe_core;
-extern crate sodiumoxide;
+extern crate rust_sodium;
 #[macro_use]
 extern crate unwrap;
 
@@ -62,18 +62,21 @@ const DEFAULT_SERVICE: &'static str = "www";
 const HOME_PAGE_FILE_NAME: &'static str = "index.html";
 
 fn handle_login() -> Arc<Mutex<Client>> {
-    let mut pass_phrase = String::new();
+    let mut secret_0 = String::new();
+    let mut secret_1 = String::new();
 
     println!("\n\tAccount Creation");
     println!("\t================");
 
-    println!("\n------------ Enter Pass-phrase ---------------");
-    let _ = std::io::stdin().read_line(&mut pass_phrase);
+    println!("\n------------ Enter account-locator ---------------");
+    let _ = std::io::stdin().read_line(&mut secret_0);
+    println!("\n------------ Enter password ---------------");
+    let _ = std::io::stdin().read_line(&mut secret_1);
 
     // Account Creation
     {
         println!("\nTrying to create an account ...");
-        let _ = unwrap!(Client::create_account(&pass_phrase));
+        let _ = unwrap!(Client::create_account(&secret_0, &secret_1));
         println!("Account Creation Successful !!");
     }
 
@@ -82,7 +85,7 @@ fn handle_login() -> Arc<Mutex<Client>> {
 
     // Log into the created account
     println!("\nTrying to log into the created account using supplied credentials ...");
-    Arc::new(Mutex::new(unwrap!(Client::log_in(&pass_phrase))))
+    Arc::new(Mutex::new(unwrap!(Client::log_in(&secret_0, &secret_1))))
 }
 
 fn create_dns_record(client: Arc<Mutex<Client>>,
@@ -98,7 +101,7 @@ fn create_dns_record(client: Arc<Mutex<Client>>,
 
     println!("\nGenerating messaging ecryption keys for you...");
     let (public_messaging_encryption_key, secret_messaging_encryption_key) =
-        sodiumoxide::crypto::box_::gen_keypair();
+        rust_sodium::crypto::box_::gen_keypair();
 
     println!("Registering Dns...");
 
@@ -177,7 +180,7 @@ fn add_service(client: Arc<Mutex<Client>>, dns_operations: &DnsOperations) -> Re
 
     println!("Creating Home Page for the Service...");
 
-    try!(writer.write(text.as_bytes(), 0));
+    try!(writer.write(text.as_bytes()));
     let (updated_parent_dir_listing, _) = try!(writer.close());
     let dir_key = updated_parent_dir_listing.get_key();
 

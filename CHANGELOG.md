@@ -1,5 +1,29 @@
 # Safe Core - Change Log
 
+## [0.20.0]
+- API changed from JSON to direct FFI calls for interfacing with other languages.
+- Provide low-level-api for finer grained control for manipulation of MaidSafe data types.
+- Provide Private & Public Appendable Data operations and manipulations.
+- Code APPEND API.
+- Update mock-routing to comply with above changes to mimic basic routing and vault functionality for purposes of independent testing.
+- Introduce Object Caching - a method in which `safe_core` keeps cache of object in LRU cache and gives only a POD (u64) handle via FFI.
+- Increase test cases performace when using mock routing by not writing data to file for test-cases.
+- Dependency update - routing updated to 0.26.0.
+
+## [0.19.0]
+- Dependency update - routing updated to 0.23.4.
+- Log path exposed to FFI so that frontend is intimated where it is expected to create its log files.
+- Dependency on rust_sodium instead of sodiumoxide and removal of libsodium instruction from CI builds.
+
+## [0.18.1]
+- Dependency update - routing reduced to 0.23.3 and safe_network_common increased to 0.7.0.
+
+## [0.18.0]
+- Requests made to safe_core will now timeout after 2 min if there is no response from routing.
+- Self-encrypt write used by safe_core via sequential encryptor will now try to put data onto the Network immediately if possible leading to better progress indication across FFI.
+- Logging added to safe_core.
+- Accessing DNS will not do a bunch of checks which it used to previously because it lead to erroneous corner cases in which one user could not access websites created by other before they created their own DNS first etc.
+
 ## [0.17.0]
 - Instead of requiring all 3 of PIN, Keyword and Password, have user type only one secure pass-phrase and derive the required credentials internally.
 

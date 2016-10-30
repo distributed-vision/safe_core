@@ -17,12 +17,13 @@
 use core::client::Client;
 use core::errors::CoreError;
 use core::utility;
-use sodiumoxide::crypto::sign;
+use rust_sodium::crypto::sign;
 
 /// Generates a random mock client for testing
 pub fn get_client() -> Result<Client, CoreError> {
-    let pass_phrase = try!(utility::generate_random_string(10));
-    Client::create_account(&pass_phrase)
+    let acc_locator = try!(utility::generate_random_string(10));
+    let acc_password = try!(utility::generate_random_string(10));
+    Client::create_account(&acc_locator, &acc_password)
 }
 
 /// Generates random public keys

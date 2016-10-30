@@ -20,8 +20,8 @@ pub mod test_utils;
 use core::errors::CoreError;
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use rand::Rng;
-use sodiumoxide::crypto::{box_, secretbox};
-use sodiumoxide::crypto::hash::sha512::{self, DIGESTBYTES, Digest};
+use rust_sodium::crypto::{box_, secretbox};
+use rust_sodium::crypto::hash::sha512::{self, DIGESTBYTES, Digest};
 
 /// Combined Asymmetric and Symmetric encryption. The data is encrypted using random Key and
 /// IV with Xsalsa-symmetric encryption. Random IV ensures that same plain text produces different
@@ -102,20 +102,20 @@ pub fn generate_random_vector<T>(length: usize) -> Result<Vec<T>, CoreError>
 }
 
 /// Derive Password, Keyword and PIN (in order)
-pub fn derive_secrets(seed: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let Digest(seed_hash) = sha512::hash(seed.as_bytes());
-    let division = DIGESTBYTES / 3;
-    let keyword = seed_hash[..division].to_owned();
-    let password = seed_hash[division..division * 2].to_owned();
-    let pin = seed_hash[division * 2..].to_owned();
+pub fn derive_secrets(acc_locator: &str, acc_password: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let Digest(locator_hash) = sha512::hash(acc_locator.as_bytes());
+
+    let pin = sha512::hash(&locator_hash[DIGESTBYTES / 2..]).0.to_owned();
+    let keyword = locator_hash.to_owned();
+    let password = sha512::hash(acc_password.as_bytes()).0.to_owned();
 
     (password, keyword, pin)
 }
 
 #[cfg(test)]
 mod test {
+    use rust_sodium::crypto::box_;
     use super::*;
-    use sodiumoxide::crypto::box_;
 
     const SIZE: usize = 10;
 
@@ -177,8 +177,9 @@ mod test {
     fn secrets_derivation() {
         // Random pass-phrase
         {
-            let pass_phrase = unwrap!(generate_random_string(SIZE));
-            let (password, keyword, pin) = derive_secrets(&pass_phrase);
+            let secret_0 = unwrap!(generate_random_string(SIZE));
+            let secret_1 = unwrap!(generate_random_string(SIZE));
+            let (password, keyword, pin) = derive_secrets(&secret_0, &secret_1);
             assert!(pin != keyword);
             assert!(password != pin);
             assert!(password != keyword);
@@ -186,11 +187,12 @@ mod test {
 
         // Nullary pass-phrase
         {
-            let pass_phrase = String::new();
-            let (password, keyword, pin) = derive_secrets(&pass_phrase);
+            let secret_0 = String::new();
+            let secret_1 = String::new();
+            let (password, keyword, pin) = derive_secrets(&secret_0, &secret_1);
             assert!(pin != keyword);
             assert!(password != pin);
-            assert!(password != keyword);
+            assert!(password == keyword);
         }
     }
 }

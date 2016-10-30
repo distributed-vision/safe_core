@@ -18,8 +18,8 @@
 use core::errors::CoreError;
 use core::id::revocation_id_type::RevocationIdType;
 use routing::XorName;
-use sodiumoxide::crypto::{box_, sign};
-use sodiumoxide::crypto::hash::sha256;
+use rust_sodium::crypto::{box_, sign};
+use rust_sodium::crypto::hash::sha256;
 
 /// IdType
 ///
@@ -104,11 +104,11 @@ impl IdType {
 mod test {
     extern crate rand;
 
-    use core::id::Random;
-    use self::rand::Rng;
-    use sodiumoxide::crypto::{box_, sign};
-    use maidsafe_utilities::serialisation::{deserialise, serialise};
     use core::id::{IdType, MaidTypeTags, RevocationIdType};
+    use core::id::Random;
+    use maidsafe_utilities::serialisation::{deserialise, serialise};
+    use rust_sodium::crypto::{box_, sign};
+    use self::rand::Rng;
 
     impl Random for IdType {
         fn generate_random() -> IdType {

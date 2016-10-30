@@ -25,9 +25,9 @@
 
 // For explanation of lint checks, run `rustc -W help` or see
 // https://github.com/maidsafe/QA/blob/master/Documentation/Rust%20Lint%20Checks.md
-#![forbid(bad_style, exceeding_bitshifts, mutable_transmutes, no_mangle_const_items,
+#![forbid(exceeding_bitshifts, mutable_transmutes, no_mangle_const_items,
           unknown_crate_types, warnings)]
-#![deny(deprecated, drop_with_repr_extern, improper_ctypes, missing_docs,
+#![deny(bad_style, deprecated, drop_with_repr_extern, improper_ctypes, missing_docs,
         non_shorthand_field_patterns, overflowing_literals, plugin_as_library,
         private_no_mangle_fns, private_no_mangle_statics, stable_features, unconditional_recursion,
         unknown_lints, unsafe_code, unused, unused_allocation, unused_attributes,
@@ -43,20 +43,22 @@
                                    option_unwrap_used))]
 #![cfg_attr(feature="clippy", allow(use_debug, doc_markdown))] // TODO: Fix doc_markdown errors.
 
-#[cfg(feature = "use-mock-routing")]
+#[cfg(all(not(test), feature = "use-mock-routing"))]
 extern crate bincode;
+extern crate config_file_handler;
+#[macro_use]
+extern crate lazy_static;
 extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate lru_time_cache;
+extern crate lru_cache;
 #[macro_use]
 extern crate maidsafe_utilities;
 extern crate rand;
 extern crate routing;
 extern crate rustc_serialize;
-extern crate safe_network_common;
 extern crate self_encryption;
-extern crate sodiumoxide;
+extern crate rust_sodium;
 extern crate time;
 #[macro_use]
 extern crate unwrap;
@@ -69,3 +71,8 @@ pub mod nfs;
 pub mod dns;
 /// Ffi module;
 pub mod ffi;
+
+/// Unversioned StructuredData
+pub const UNVERSIONED_STRUCT_DATA_TYPE_TAG: u64 = 500;
+/// Versioned StructuredData
+pub const VERSIONED_STRUCT_DATA_TYPE_TAG: u64 = 501;

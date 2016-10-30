@@ -15,17 +15,19 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
+// TODO Remove type_tag parameter from api's of unversioned and versioned SD's as they are now
+// consolidated to 500 and 501
+
 /// Unversioned-Structured Data
 pub mod unversioned;
 /// Versioned-Structured Data
 pub mod versioned;
 
-use std::{u64, u8};
-
 use core::errors::CoreError;
 use maidsafe_utilities::serialisation::serialise;
 use routing::{StructuredData, XOR_NAME_LEN, XorName};
-use sodiumoxide::crypto::sign;
+use rust_sodium::crypto::sign;
+use std::{u64, u8};
 
 const PADDING_SIZE_IN_BYTES: usize = 1024;
 const MIN_RESIDUAL_SPACE_FOR_VALID_STRUCTURED_DATA_IN_BYTES: usize = 70;
@@ -94,8 +96,8 @@ pub fn check_if_data_can_fit_in_structured_data(data: &[u8],
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use core::utility::test_utils;
+    use super::*;
 
     // Refers the fixed size of the get_approximate_space_for_data fn without signatures
     const DEFAULT_FIXED_SIZE: usize = ::routing::MAX_STRUCTURED_DATA_SIZE_IN_BYTES - 1112;

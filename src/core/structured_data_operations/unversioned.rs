@@ -15,17 +15,17 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use std::sync::{Arc, Mutex};
+use core::SelfEncryptionStorage;
 
 use core::client::Client;
 use core::errors::CoreError;
-use core::SelfEncryptionStorage;
 use core::structured_data_operations::{self, DataFitResult};
 use core::utility;
 use maidsafe_utilities::serialisation::{deserialise, serialise};
 use routing::{Data, DataIdentifier, ImmutableData, StructuredData, XorName};
+use rust_sodium::crypto::{box_, sign};
 use self_encryption::{DataMap, SelfEncryptor};
-use sodiumoxide::crypto::{box_, sign};
+use std::sync::{Arc, Mutex};
 
 #[allow(variant_size_differences)]
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]
@@ -49,6 +49,8 @@ pub fn create(client: Arc<Mutex<Client>>,
               private_signing_key: &sign::SecretKey,
               data_encryption_keys: Option<(&box_::PublicKey, &box_::SecretKey, &box_::Nonce)>)
               -> Result<StructuredData, CoreError> {
+    trace!("Creating unversioned StructuredData.");
+
     let data_to_store = try!(get_encoded_data_to_store(DataTypeEncoding::Data(data.clone()),
                                                        data_encryption_keys));
 
@@ -57,6 +59,8 @@ pub fn create(client: Arc<Mutex<Client>>,
             owner_keys.clone(),
             prev_owner_keys.clone())) {
         DataFitResult::DataFits => {
+            trace!("Data fits in the StructuredData.");
+
             Ok(try!(StructuredData::new(tag_type,
                                         id,
                                         version,
@@ -66,6 +70,8 @@ pub fn create(client: Arc<Mutex<Client>>,
                                         Some(private_signing_key))))
         }
         DataFitResult::DataDoesNotFit => {
+            trace!("Data does not fit in the StructuredData. Self-Encrypting data...");
+
             let mut storage = SelfEncryptionStorage::new(client.clone());
             let mut self_encryptor = try!(SelfEncryptor::new(&mut storage, DataMap::None));
             try!(self_encryptor.write(&data, 0));
@@ -79,6 +85,9 @@ pub fn create(client: Arc<Mutex<Client>>,
                     owner_keys.clone(),
                     prev_owner_keys.clone())) {
                 DataFitResult::DataFits => {
+                    trace!("DataMap (encrypted: {}) fits in the StructuredData.",
+                           data_encryption_keys.is_some());
+
                     Ok(try!(StructuredData::new(tag_type,
                                                 id,
                                                 version,
@@ -88,10 +97,14 @@ pub fn create(client: Arc<Mutex<Client>>,
                                                 Some(private_signing_key))))
                 }
                 DataFitResult::DataDoesNotFit => {
+                    trace!("DataMap (encrypted: {}) does not fit in the StructuredData. Putting \
+                            it out as ImmutableData.",
+                           data_encryption_keys.is_some());
+
                     let immutable_data = ImmutableData::new(data_to_store);
                     let name = *immutable_data.name();
                     let data = Data::Immutable(immutable_data);
-                    try!(unwrap!(client.lock()).put_recover(data, None));
+                    try!(Client::put_recover(client, data, None));
 
                     let data_to_store = try!(get_encoded_data_to_store(
                         DataTypeEncoding::MapName(name), data_encryption_keys));
@@ -101,6 +114,7 @@ pub fn create(client: Arc<Mutex<Client>>,
                                                                         owner_keys.clone(),
                                                                         prev_owner_keys.clone())) {
                         DataFitResult::DataFits => {
+                            trace!("ImmutableData name fits in StructuredData");
                             Ok(try!(StructuredData::new(tag_type,
                                                         id,
                                                         version,
@@ -109,7 +123,10 @@ pub fn create(client: Arc<Mutex<Client>>,
                                                         prev_owner_keys,
                                                         Some(private_signing_key))))
                         }
-                        _ => Err(CoreError::StructuredDataHeaderSizeProhibitive),
+                        _ => {
+                            trace!("Even name of ImmutableData does not fit in StructuredData.");
+                            Err(CoreError::StructuredDataHeaderSizeProhibitive)
+                        }
                     }
                 }
                 DataFitResult::NoDataCanFit => Err(CoreError::StructuredDataHeaderSizeProhibitive),
@@ -124,6 +141,8 @@ pub fn get_data(client: Arc<Mutex<Client>>,
                 struct_data: &StructuredData,
                 data_decryption_keys: Option<(&box_::PublicKey, &box_::SecretKey, &box_::Nonce)>)
                 -> Result<Vec<u8>, CoreError> {
+    trace!("Getting unversioned StructuredData");
+
     match try!(get_decoded_stored_data(&struct_data.get_data(), data_decryption_keys)) {
         DataTypeEncoding::Data(data) => Ok(data),
         DataTypeEncoding::Map(data_map) => {
@@ -191,12 +210,12 @@ fn get_decoded_stored_data(raw_data: &[u8],
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use core::utility;
     use rand;
     use routing::XorName;
+    use rust_sodium::crypto::box_;
     use std::sync::{Arc, Mutex};
-    use sodiumoxide::crypto::box_;
-    use core::utility;
+    use super::*;
 
     const TAG_ID: u64 = ::core::MAIDSAFE_TAG + 1000;
 

@@ -15,13 +15,13 @@
 // Please review the Licences for the specific language governing permissions and limitations
 // relating to use of the SAFE Network Software.
 
-use std::sync::{Arc, Mutex};
+use core::{SelfEncryptionStorage, SelfEncryptionStorageError};
 
 use core::client::Client;
-use core::{SelfEncryptionStorage, SelfEncryptionStorageError};
 use nfs::errors::NfsError;
 use nfs::file::File;
 use self_encryption::SelfEncryptor;
+use std::sync::{Arc, Mutex};
 
 /// Reader is used to read contents of a File. It can read in chunks if the file happens to be very
 /// large
@@ -47,12 +47,15 @@ impl<'a> Reader<'a> {
 
     /// Returns the total size of the file/blob
     pub fn size(&self) -> u64 {
-        debug!("Retrieving file length ...");
         self.self_encryptor.len()
     }
 
     /// Read data from file/blob
     pub fn read(&mut self, position: u64, length: u64) -> Result<Vec<u8>, NfsError> {
+        trace!("Reader reading from pos: {} and size: {}.",
+               position,
+               length);
+
         if (position + length) > self.size() {
             Err(NfsError::InvalidRangeSpecified)
         } else {

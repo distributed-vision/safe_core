@@ -41,7 +41,7 @@ extern crate rand;
 extern crate routing;
 extern crate rustc_serialize;
 extern crate safe_core;
-extern crate sodiumoxide;
+extern crate rust_sodium;
 #[macro_use]
 extern crate maidsafe_utilities;
 #[macro_use]
@@ -52,7 +52,7 @@ use safe_core::core::client::Client;
 use docopt::Docopt;
 use routing::{Data, ImmutableData, StructuredData};
 use rand::{Rng, SeedableRng};
-use sodiumoxide::crypto::sign::{PublicKey, SecretKey};
+use rust_sodium::crypto::sign::{PublicKey, SecretKey};
 
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
@@ -109,15 +109,16 @@ fn main() {
     });
 
     // Create account
-    let pass_phrase: String = rng.gen_ascii_chars().take(20).collect();
+    let secret_0: String = rng.gen_ascii_chars().take(20).collect();
+    let secret_1: String = rng.gen_ascii_chars().take(20).collect();
 
     let mut client = if args.flag_get_only {
-        unwrap!(Client::log_in(&pass_phrase))
+        unwrap!(Client::log_in(&secret_0, &secret_1))
     } else {
         println!("\n\tAccount Creation");
         println!("\t================");
         println!("\nTrying to create an account ...");
-        unwrap!(Client::create_account(&pass_phrase))
+        unwrap!(Client::create_account(&secret_0, &secret_1))
     };
     println!("Logged in successfully !!");
     let public_key = *unwrap!(client.get_public_signing_key());
